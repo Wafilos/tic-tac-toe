@@ -4,6 +4,194 @@
 #include <limits>
 #include <utility>
 #include <vector>
+#include <chrono>
+#include <string>
+#include <fstream>
+#include <iomanip>
+
+
+struct Move {
+    int row;
+    int col;
+    char player;
+    double moveTimeSeconds;
+
+    Move() = default;
+    Move(int r, int c, char p, double t = 0.0) : row(r), col(c), player(p), moveTimeSeconds(t) {}
+};
+
+struct GameData {
+    int boardSize;
+    int winLength;
+    std::string result;  // "human_win", "computer_win", "draw"
+    int totalMoves;
+    double durationSeconds;
+    std::vector<Move> moveHistory;
+};
+
+class GameReport {
+private:
+    std::vector<GameData> games;
+    std::chrono::steady_clock::time_point lastMoveTime;
+
+public:
+    void recordMove(int row, int col, char player) {
+        if (!games.empty()) {
+            auto currentTime = std::chrono::steady_clock::now();
+            double moveTime = 0.0;
+
+            if (games.back().moveHistory.empty()) {
+                // First move in the game
+                moveTime = 0.0;
+            } else {
+                moveTime = std::chrono::duration<double>(
+                    currentTime - lastMoveTime
+                ).count();
+            }
+
+            games.back().moveHistory.emplace_back(row, col, player, moveTime);
+            lastMoveTime = currentTime;
+        }
+    }
+
+    void startNewGame(int boardSize, int winLength) {
+        GameData newGame;
+        newGame.boardSize = boardSize;
+        newGame.winLength = winLength;
+        newGame.result = "";
+        newGame.totalMoves = 0;
+        newGame.durationSeconds = 0.0;
+        games.push_back(newGame);
+        lastMoveTime = std::chrono::steady_clock::now();
+    }
+
+    void endGame(
+        const std::string& result,
+        int totalMoves,
+        double durationSeconds
+    ) {
+        if (!games.empty()) {
+            games.back().result = result;
+            games.back().totalMoves = totalMoves;
+            games.back().durationSeconds = durationSeconds;
+        }
+    }
+
+    void printReport() const {
+        if (games.empty()) {
+            std::cout << "\nBrak danych gier w raporcie.\n";
+            return;
+        }
+
+        std::cout << "\n========== RAPORT Z GIER ==========\n";
+        std::cout << "Liczba rozegranych gier: " << games.size() << "\n\n";
+
+        // Summary statistics
+        int humanWins = 0;
+        int computerWins = 0;
+        int draws = 0;
+        double totalDuration = 0.0;
+        int totalMovesSum = 0;
+
+        for (const auto& game : games) {
+            if (game.result == "human_win") {
+                ++humanWins;
+            } else if (game.result == "computer_win") {
+                ++computerWins;
+            } else {
+                ++draws;
+            }
+            totalDuration += game.durationSeconds;
+            totalMovesSum += game.totalMoves;
+        }
+
+        std::cout << "--- PODSUMOWANIE ---\n";
+        std::cout << "Wygrane gracza:   " << humanWins << "\n";
+        std::cout << "Wygrane komputera: " << computerWins << "\n";
+        std::cout << "Remisy:           " << draws << "\n";
+        std::cout << "Srednia liczba ruchow: " << std::fixed << std::setprecision(1)
+                  << static_cast<double>(totalMovesSum) / games.size() << "\n";
+        std::cout << "Sredni czas gry (s):   " << std::fixed << std::setprecision(2)
+                  << totalDuration / games.size() << "\n";
+
+        // Detailed game logs
+        std::cout << "\n--- SZCZEGOLOWE LOGI GIER ---\n";
+        for (size_t i = 0; i < games.size(); ++i) {
+            printGameDetails(i + 1);
+        }
+
+        std::cout << "\n====================================\n";
+    }
+
+    void printGameDetails(size_t gameNumber) const {
+        if (gameNumber < 1 || gameNumber > games.size()) {
+            std::cout << "Niepoprawny numer gry.\n";
+            return;
+        }
+
+        const auto& game = games[gameNumber - 1];
+
+        std::cout << "\nGra " << gameNumber << ":\n";
+        std::cout << "  Rozmiar planszy: " << game.boardSize << "x"
+                  << game.boardSize << "\n";
+        std::cout << "  Do wygranej potrzeba: " << game.winLength << " znakow\n";
+        std::cout << "  Wynik: " << game.result << "\n";
+        std::cout << "  Liczba ruchow: " << game.totalMoves << "\n";
+        std::cout << "  Czas trwania: " << std::fixed << std::setprecision(2)
+                  << game.durationSeconds << " sekund\n";
+
+        std::cout << "  Historia ruchow:\n";
+        double cumulativeTime = 0.0;
+        for (size_t j = 0; j < game.moveHistory.size(); ++j) {
+            const auto& move = game.moveHistory[j];
+            cumulativeTime += move.moveTimeSeconds;
+            std::cout << "    " << j + 1 << ". "
+                      << (move.player == 'X' ? "Gracz" : "Komputer")
+                      << " - wiersz " << move.row + 1
+                      << ", kolumna " << move.col + 1
+                      << " (czas ruchu: " << std::fixed << std::setprecision(2)
+                      << move.moveTimeSeconds << "s, lacznie: "
+                      << cumulativeTime << "s)\n";
+        }
+    }
+
+    void saveToFile(const std::string& filename) const {
+        std::ofstream file(filename, std::ios::app);
+        if (!file.is_open()) {
+            std::cout << "Blad: Nie mozna otworzyc pliku " << filename << "\n";
+            return;
+        }
+
+        auto now = std::chrono::system_clock::now();
+        auto time = std::chrono::system_clock::to_time_t(now);
+
+        file << "\n========== RAPORT Z DNIA "
+             << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S")
+             << " ==========\n";
+        file << "Liczba gier: " << games.size() << "\n";
+
+        int humanWins = 0;
+        int computerWins = 0;
+        int draws = 0;
+
+        for (const auto& game : games) {
+            if (game.result == "human_win") {
+                ++humanWins;
+            } else if (game.result == "computer_win") {
+                ++computerWins;
+            } else {
+                ++draws;
+            }
+        }
+
+        file << "Wygrane gracza: " << humanWins << "\n";
+        file << "Wygrane komputera: " << computerWins << "\n";
+        file << "Remisy: " << draws << "\n";
+
+        file.close();
+        std::cout << "\nRaport zapisany do pliku: " << filename << "\n";
+    }
+};
 
 
 class TicTacToe {
@@ -20,6 +208,9 @@ private:
 
     const char human = 'X';
     const char computer = 'O';
+
+    GameReport& report;
+    std::chrono::steady_clock::time_point gameStartTime;
 
     bool isInside(int row, int col) const {
         return row >= 0 && row < size &&
@@ -180,14 +371,14 @@ private:
     int orderingScore(int row, int col) {
         int score = 0;
 
-        // Ruch wygrywający powinien zostać sprawdzony jako pierwszy.
+        // Ruch wygrywający.
         board[row][col] = computer;
 
         if (isWinningMove(row, col, computer)) {
             score += 1'000'000;
         }
 
-        // Następnie sprawdzamy, czy ruch blokuje gracza.
+        // blokowanie gracza
         board[row][col] = human;
 
         if (isWinningMove(row, col, human)) {
@@ -245,7 +436,7 @@ private:
 
         /*
             Kolejność ruchów ma znaczenie dla alfa-beta.
-            Najbardziej obiecujące ruchy sprawdzamy jako pierwsze.
+            Najbardziej obiecujące ruchy sprawdzane jako pierwsze.
         */
         std::sort(
             moves.begin(),
@@ -260,23 +451,7 @@ private:
     }
 
     int chooseSearchDepth() const {
-        const int remainingMoves =
-            size * size - movesPlayed;
-
-        if (size == 3 && winLength == 3) {
-            // Dla klasycznej gry sprawdzamy całe drzewo.
-            return remainingMoves;
-        }
-
-        if (size <= 4) {
-            return std::min(6, remainingMoves);
-        }
-
-        if (size <= 5) {
-            return std::min(4, remainingMoves);
-        }
-
-        return std::min(3, remainingMoves);
+        return 6;
     }
 
     int minimax(
@@ -311,6 +486,11 @@ private:
             int bestScore = -INF;
 
             for (const auto& [row, col] : moves) {
+                // Validate square is empty before placing mark
+                if (board[row][col] != EMPTY) {
+                    continue;
+                }
+
                 board[row][col] = computer;
                 ++movesPlayed;
 
@@ -341,6 +521,10 @@ private:
         int bestScore = INF;
 
         for (const auto& [row, col] : moves) {
+            if (board[row][col] != EMPTY) {
+                continue;
+            }
+
             board[row][col] = human;
             ++movesPlayed;
 
@@ -376,6 +560,11 @@ private:
         std::pair<int, int> bestMove = moves.front();
 
         for (const auto& [row, col] : moves) {
+            // Validate square is empty before placing mark
+            if (board[row][col] != EMPTY) {
+                continue;
+            }
+
             board[row][col] = computer;
             ++movesPlayed;
 
@@ -466,15 +655,20 @@ private:
     }
 
 public:
-    TicTacToe(int boardSize, int requiredMarks)
+    TicTacToe(int boardSize, int requiredMarks, GameReport& gameReport)
         : size(boardSize),
           winLength(requiredMarks),
           board(
               boardSize,
               std::vector<char>(boardSize, EMPTY)
-          ) {}
+          ),
+          report(gameReport) {
+        report.startNewGame(boardSize, requiredMarks);
+    }
 
     void play() {
+        gameStartTime = std::chrono::steady_clock::now();
+
         std::cout << "Grasz jako X. Komputer gra jako O.\n";
 
         std::cout
@@ -490,16 +684,29 @@ public:
 
             board[humanRow][humanCol] = human;
             ++movesPlayed;
+            report.recordMove(humanRow, humanCol, human);
 
             printBoard();
 
             if (isWinningMove(humanRow, humanCol, human)) {
+                auto gameEndTime = std::chrono::steady_clock::now();
+                double duration = std::chrono::duration<double>(
+                    gameEndTime - gameStartTime
+                ).count();
+                report.endGame("human_win", movesPlayed, duration);
+
                 std::cout << "Wygrales!\n";
                 system("pause"); 
                 return;
             }
 
             if (isBoardFull()) {
+                auto gameEndTime = std::chrono::steady_clock::now();
+                double duration = std::chrono::duration<double>(
+                    gameEndTime - gameStartTime
+                ).count();
+                report.endGame("draw", movesPlayed, duration);
+
                 std::cout << "Remis.\n";
                 system("pause"); 
                 return;
@@ -510,6 +717,7 @@ public:
 
             board[computerRow][computerCol] = computer;
             ++movesPlayed;
+            report.recordMove(computerRow, computerCol, computer);
 
             printBoard();
 
@@ -518,12 +726,24 @@ public:
                     computerCol,
                     computer
                 )) {
+                auto gameEndTime = std::chrono::steady_clock::now();
+                double duration = std::chrono::duration<double>(
+                    gameEndTime - gameStartTime
+                ).count();
+                report.endGame("computer_win", movesPlayed, duration);
+
                 std::cout << "Komputer wygral.\n";
                 system("pause"); 
                 return;
             }
 
             if (isBoardFull()) {
+                auto gameEndTime = std::chrono::steady_clock::now();
+                double duration = std::chrono::duration<double>(
+                    gameEndTime - gameStartTime
+                ).count();
+                report.endGame("draw", movesPlayed, duration);
+
                 std::cout << "Remis.\n";
                 system("pause"); 
                 return;
@@ -533,34 +753,60 @@ public:
 };
 
 int main() {
-    int boardSize;
-    int requiredMarks;
+    GameReport report;
 
-    std::cout
-        << "Podaj rozmiar planszy N (N x N): ";
+    while (true) {
+        int boardSize;
+        int requiredMarks;
 
-    std::cin >> boardSize;
-
-    std::cout
-        << "Podaj liczbe znakow potrzebnych do wygranej: ";
-
-    std::cin >> requiredMarks;
-
-    if (!std::cin ||
-        boardSize < 3 ||
-        boardSize > 7 ||
-        requiredMarks < 3 ||
-        requiredMarks > boardSize) {
         std::cout
-            << "Niepoprawna konfiguracja. "
-            << "Wymagane: 3 <= N <= 7 oraz 3 <= K <= N.\n";
+            << "Podaj rozmiar planszy N (N x N): ";
+
+        std::cin >> boardSize;
+
+        std::cout
+            << "Podaj liczbe znakow potrzebnych do wygranej: ";
+
+        std::cin >> requiredMarks;
+
+        if (!std::cin ||
+            boardSize < 3 ||
+            boardSize > 7 ||
+            requiredMarks < 3 ||
+            requiredMarks > boardSize) {
+            std::cout
+                << "Niepoprawna konfiguracja. "
+                << "Wymagane: 3 <= N <= 7 oraz 3 <= K <= N.\n";
             system("pause"); 
 
-        return 1;
+            return 1;
+        }
+
+        TicTacToe game(boardSize, requiredMarks, report);
+        game.play();
+
+        // Offer to play again
+        std::cout << "\nCzy chcesz zagrac jeszcze raz? (t/n): ";
+        char choice;
+        std::cin >> choice;
+
+        if (choice != 't' && choice != 'T') {
+            break;
+        }
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
     }
 
-    TicTacToe game(boardSize, requiredMarks);
-    game.play();
+    // Display report
+    report.printReport();
 
+    std::cout << "\nCzy chcesz zapisac raport do pliku? (t/n): ";
+    char saveChoice;
+    std::cin >> saveChoice;
+
+    if (saveChoice == 't' || saveChoice == 'T') {
+        report.saveToFile("tictactoe_raport.txt");
+    }
+
+    system("pause");
     return 0;
 }
